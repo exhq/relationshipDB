@@ -1,5 +1,7 @@
 package dev.exhq.wedlock;
 
+import io.javalin.http.Context;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
@@ -13,12 +15,21 @@ import java.util.Objects;
 
 public class DiscordRequests {
 
-    public static <T> HttpResponse.BodyHandler<T> getJsonHandler(Class<T> tClass) {
+    public static <T> HttpResponse.@NotNull BodyHandler<T> getJsonHandler(@NotNull Class<T> tClass) {
         return responseInfo -> HttpResponse.BodySubscribers.mapping(HttpResponse.BodySubscribers.ofInputStream(),
                 inp -> GsonMapper.defaultGson.fromJson(new InputStreamReader(inp), tClass));
     }
 
-    public static @Nullable CurrentAuthorization selfAuthenticate(String token) {
+    public static @NotNull CurrentAuthorization requireAuthentication(@NotNull Context context) {
+        var auth = selfAuthenticate(context.header("Authorization"));
+        if (auth == null) {
+            throw new AuthenticationMissingException();
+        }
+        return auth;
+    }
+
+    public static @Nullable CurrentAuthorization selfAuthenticate(@Nullable String token) {
+        if (token == null) return null;
         var httpClient = HttpClient.newHttpClient();
         try {
             var response = httpClient.send(HttpRequest.newBuilder()

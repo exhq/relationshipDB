@@ -7,7 +7,7 @@ public class Wedlock {
     public static void main(String[] args) {
         var marriageManager = new MarriageManager();
         marriageManager.registerMarriage(new Marriage("712639419785412668", "310702108997320705"));
-        var app = Javalin.create(config -> {
+        Javalin.create(config -> {
                     config.jsonMapper(GsonMapper.createGsonMapper());
                     config.plugins.enableCors(cors ->
                             cors.add(CorsPluginConfig::anyHost));
@@ -24,7 +24,14 @@ public class Wedlock {
                         ctx.json(marriage);
                 })
                 .post("/v2/divorce", (ctx) -> {
-
+                    var user = DiscordRequests.requireAuthentication(ctx);
+                    var marriage = marriageManager.getMarriage(user.user().id());
+                    if (marriage == null) {
+                        ctx.status(404).json(new Failure("You are not married and cannot divorce"));
+                        return;
+                    }
+                    marriageManager.unregisterMarriage(marriage);
+                    ctx.status(200).json(marriage);
                 })
                 .post("/v2/propose", (ctx) -> {
                     var user = ctx.queryParam("to");
@@ -32,25 +39,71 @@ public class Wedlock {
                     if (user == null) {
                         ctx.status(400).json(new Failure("No userid provided"));
                     }
-                    if (message == null) message = "Wanna fuck?";
-                    var from = DiscordRequests.selfAuthenticate(ctx.header("Authorize"));
-                    if (from == null) {
-                        ctx.status(401).json(new Failure("Could not authenticate"));
-                        return;
-                    }
+                    if (message == null) message = "Wanna fornicate?";
+                    var from = DiscordRequests.requireAuthentication(ctx);
                     var proposal = Proposal.createProposal(from.user().id(), user, message);
                     marriageManager.insertProposal(proposal);
                     ctx.json(proposal);
                 })
                 .post("/v2/propose/accept", ctx -> {
-                    ctx.queryParam("proposalid");
+                    var user = DiscordRequests.requireAuthentication(ctx);
+                    var proposalId = ctx.queryParam("proposalid");
+                    if (proposalId == null) {
+                        ctx.status(400).json(new Failure("No proposalid provided"));
+                        return;
+                    }
+                    var proposal = marriageManager.getProposal(proposalId);
+                    if (proposal == null) {
+                        ctx.status(404).json(new Failure("No proposal found"));
+                        return;
+                    }
+                    if (!proposal.to().equals(user.user().id())) {
+                        ctx.status(403).json(new Failure("You cannot accept this proposal"));
+                        return;
+                    }
+                    var marriage = marriageManager.acceptProposal(proposal);
+                    if (marriage == null) {
+                        ctx.status(400).json(new Failure("Could not accept proposal. Did you already accept this proposal before?"));
+                        return;
+                    }
+                    ctx.json(marriage);
                 })
                 .post("/v2/propose/deny", ctx -> {
-                    ctx.queryParam("proposalid");
+                    var user = DiscordRequests.requireAuthentication(ctx);
+                    var proposalId = ctx.queryParam("proposalid");
+                    if (proposalId == null) {
+                        ctx.status(400).json(new Failure("No proposalid provided"));
+                        return;
+                    }
+                    var proposal = marriageManager.getProposal(proposalId);
+                    if (proposal == null) {
+                        ctx.status(404).json(new Failure("No proposal found"));
+                        return;
+                    }
+                    if (!proposal.to().equals(user.user().id())) {
+                        ctx.status(403).json(new Failure("You cannot deny this proposal"));
+                        return;
+                    }
+                    if (!marriageManager.denyProposal(proposal)) {
+                        ctx.status(400).json(new Failure("Could not deny proposal. Did you already accept this proposal before?"));
+                        return;
+                    }
+                    ctx.status(200).result("");
                 })
                 .post("/v2/propose/view", ctx -> {
-
+                    var proposalId = ctx.queryParam("proposalid");
+                    if (proposalId == null) {
+                        ctx.status(400).json(new Failure("No proposalid provided"));
+                        return;
+                    }
+                    var proposal = marriageManager.getProposal(proposalId);
+                    if (proposal == null) {
+                        ctx.status(404).json(new Failure("No proposal found"));
+                        return;
+                    }
+                    ctx.status(200).json(proposal);
                 })
+                .exception(AuthenticationMissingException.class, (exception, ctx) -> ctx.status(401).json(new Failure("You need to log in first!")))
                 .error(404, ctx -> ctx.status(404).json(new Failure("Not found")))
                 .error(500, ctx -> ctx.status(500).json(new Failure("Internal Error")))
                 .start(8080);

@@ -19,21 +19,20 @@ public class MarriageManager {
         return CollectionHelper.getFirstOrNull(proposalLookup.get(proposalId));
     }
 
-    public boolean denyProposal(@NotNull String proposalId) {
-        var proposal = getProposal(proposalId);
-        if (proposal == null || proposal.accepted()) return false;
+    public boolean denyProposal(@NotNull Proposal proposal) {
+        if (proposal.accepted()) return false;
         proposals.remove(proposal);
         proposals.add(new Proposal(proposal.from(), proposal.to(), proposal.message(), proposal.id(), true));
         return true;
     }
 
-    public boolean acceptProposal(@NotNull String proposalId) {
-        var proposal = getProposal(proposalId);
-        if (proposal == null || proposal.accepted()) return false;
+    public @Nullable Marriage acceptProposal(@NotNull Proposal proposal) {
+        if (proposal.accepted()) return null;
         proposals.remove(proposal);
         proposals.add(new Proposal(proposal.from(), proposal.to(), proposal.message(), proposal.id(), true));
-        registerMarriage(new Marriage(proposal.to(), proposal.from()));
-        return true;
+        Marriage marriage = new Marriage(proposal.to(), proposal.from());
+        registerMarriage(marriage);
+        return marriage;
     }
 
 
