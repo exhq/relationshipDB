@@ -6,7 +6,7 @@ import io.javalin.plugin.bundled.CorsPluginConfig;
 public class Wedlock {
     public static void main(String[] args) {
         var marriageManager = new MarriageManager();
-        marriageManager.registerMarriage(new Marriage("712639419785412668", "554605735627980805"));
+        marriageManager.registerMarriage(new Marriage("712639419785412668", "343383572805058560"));
         Javalin.create(config -> {
                     config.jsonMapper(GsonMapper.createGsonMapper());
                     config.plugins.enableCors(cors ->
