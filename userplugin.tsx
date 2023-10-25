@@ -6,17 +6,21 @@
 
 import { ApplicationCommandInputType, ApplicationCommandOptionType } from "@api/Commands";
 import { DataStore } from "@api/index";
+import { addAccessory } from "@api/MessageAccessories";
+import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
 import { sendMessage } from "@utils/discord";
 import { openModal } from "@utils/modal";
-import { useAwaiter } from "@utils/react";
+import { LazyComponent, useAwaiter } from "@utils/react";
 import definePlugin from "@utils/types";
-import { findByProps, findByPropsLazy } from "@webpack";
-import { showToast, UserStore } from "@webpack/common";
+import { findByCode, findByProps, findByPropsLazy } from "@webpack";
+import { Button, Parser, showToast, Text, UserStore } from "@webpack/common";
+import { Message } from "discord-types/general";
 
 const OAuth = findByPropsLazy("OAuth2AuthorizeModal");
 
-const WL_HOSTNAME = "https://wedlock.exhq.dev";
+const WL_HOSTNAME = "http://localhost:8080";
+const messageLinkRegex = /(?<!<)https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
 
 function getTokenStorageKey(): string {
     const userId = UserStore.getCurrentUser().id;
@@ -51,14 +55,25 @@ async function getAuthorizationToken(): Promise<string> {
     });
 
 }
-
+const Embed = LazyComponent(() => findByCode(".inlineMediaEmbed"));
+let hasDisplayedBrokenServer = false;
 async function fetchWedlock(method: "GET" | "POST", url: string, params?: Record<string, string>, hasRetried?: boolean): Promise<any | null> {
-    const response = await fetch("http://localhost:8080/" + url + (params ? "?" + new URLSearchParams(params) : ""), {
-        method: method,
-        headers: method === "POST" ? {
-            authorization: await getAuthorizationToken()
-        } : {}
-    });
+    let response: Response;
+    try {
+        response = await fetch(WL_HOSTNAME + "/" + url + (params ? "?" + new URLSearchParams(params) : ""), {
+            method: method,
+            headers: method === "POST" ? {
+                authorization: await getAuthorizationToken()
+            } : {}
+        });
+    } catch (e) {
+        console.error(e);
+        if (!hasDisplayedBrokenServer) {
+            hasDisplayedBrokenServer = true;
+            showToast("Failed to contact wedlock API. Is the server down?");
+        }
+        return null;
+    }
     if (response.status === 401) {
         await DataStore.del(getTokenStorageKey());
         if (!hasRetried) {
@@ -72,11 +87,89 @@ async function fetchWedlock(method: "GET" | "POST", url: string, params?: Record
     }
     return jsonResponse;
 }
+const proposePath = "/v2/propose/embed";
+type Proposal = {
+    id: string,
+    to: string,
+    from: string,
+    message: string,
+    accepted: boolean,
+};
+
+function mentionFor(id: string) {
+    return Parser.parse(`<@${id}>`);
+}
+
+function ProposalComponent({ proposalId }: { proposalId: string; }) {
+    const [value] = useAwaiter(async () => {
+        return await fetchWedlock("GET", "v2/propose/view", { proposalid: proposalId }) as Proposal | null;
+    });
+    if (!value) return <></>;
+    return <Embed
+        embed={{
+            rawDescription: "",
+            color: "var(--background-secondary)",
+            author: {
+                name: <Text variant="text-lg/medium" tag="span">{mentionFor(value.from)} send a proposal</Text>
+            },
+        }}
+        renderDescription={() => (
+            <>
+                <Text variant="text-md/medium" tag="p">
+                    {mentionFor(value.from)} proposed to {mentionFor(value.to)} with message {value.message}
+                </Text>
+                {!value.accepted && value.to === UserStore.getCurrentUser().id &&
+                    <p>
+                        <Button
+                            style={{ display: "inline-block" }}
+                            onClick={() => {
+                                showToast("Accepting proposal");
+                                fetchWedlock("POST", "v2/propose/accept", { proposalId }).then(response =>
+                                    response && showToast("Accepted proposal succesfully"));
+                            }}>Accept</Button>
+                        {" "}
+                        <Button
+                            look={Button.Looks.FILLED}
+                            color={Button.Colors.RED}
+                            style={{ display: "inline-block" }}
+                            onClick={() => {
+                                showToast("Declining proposal");
+                                fetchWedlock("POST", "v2/propose/deny", { proposalId }).then(response =>
+                                    response && showToast("Declined proposal succesfully"));
+                            }}>Decline</Button>
+                    </p>}
+                {value.accepted && <Text variant="text-md/medium" tag="p">{mentionFor(value.from)} accepted!</Text>}
+            </>
+        )} >
+    </ Embed >;
+}
 
 export default definePlugin({
-    guh(i) {
+    dependencies: ["MessageAccessoriesAPI"],
+    start() {
+        addAccessory("proposal", props => {
+            // eslint-disable-next-line prefer-destructuring
+            const message: Message = props.message;
+            const needle = WL_HOSTNAME + proposePath;
+            const needleLocation = message.content.indexOf(needle);
+            if (needleLocation < 0) return null;
+            const link = message.content.slice(needleLocation).split(" ")[0];
+            let url: URL;
+            try {
+                url = new URL(link);
+            } catch (e) {
+                return null;
+            }
+            const proposalId = url.searchParams.get("proposalid");
+            if (url.origin !== WL_HOSTNAME || url.pathname !== proposePath || !proposalId) return null;
+            return <ErrorBoundary>
+                <ProposalComponent proposalId={proposalId}></ProposalComponent>
+            </ErrorBoundary>;
+        }, 4);
+    },
+    guh(userid: string) {
         const partner = async () => {
-            const res = await fetchWedlock("GET", `/v2/marriage?userid=${i}`).then(r => r.json());
+            const res = await fetchWedlock("GET", `/v2/marriage?userid=${userid}`).then(r => r.json());
             if (!res) {
                 return "the fucking server is down";
             }
@@ -84,8 +177,8 @@ export default definePlugin({
                 console.log(true);
                 return true;
             } else {
-                console.log(res.bottom ? res.top : res.bottom);
-                return i === res.bottom ? res.top : res.bottom;
+                console.log(userid === res.bottom ? res.top : res.bottom);
+                return userid === res.bottom ? res.top : res.bottom;
             }
         };
         const [partnerInfo] = useAwaiter(async () => {
@@ -140,7 +233,7 @@ export default definePlugin({
                 name: "proposee",
                 type: ApplicationCommandOptionType.USER,
                 required: true,
-                description: "who's your cute kitten?"
+                description: "Who's your cute kitten?"
             }], execute(args, ctx) {
                 const proposee = args.find(it => it.name === "proposee")!!.value;
                 (async () => {
@@ -149,7 +242,7 @@ export default definePlugin({
                         msg: "gay"
                     });
                     console.log(response);
-                    sendMessage(ctx.channel.id, { content: `will you marry me <@${proposee}>? ${WL_HOSTNAME}/propose/embed?proposalid=` + response.id });
+                    sendMessage(ctx.channel.id, { content: `will you marry me <@${proposee}>? ${WL_HOSTNAME}/v2/propose/embed?proposalid=` + response.id });
                 })();
             }
         }
