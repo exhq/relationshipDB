@@ -2,13 +2,27 @@ package dev.exhq.wedlock;
 
 import io.javalin.Javalin;
 import io.javalin.plugin.bundled.CorsPluginConfig;
+import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public class Wedlock {
     public static void main(String[] args) {
         var marriageManager = new MarriageManager();
-        marriageManager.registerMarriage(new Marriage("712639419785412668", "343383572805058560"));
+        var databaseFile = new File("database.json");
+        try {
+            marriageManager.loadFrom(databaseFile);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        var saveThread = createSaveThread(marriageManager, databaseFile, "Looping save thread", true);
+        saveThread.start();
+        Runtime.getRuntime().addShutdownHook(createSaveThread(marriageManager, databaseFile, "Exit save thread", false));
         Javalin.create(config -> {
                     config.jsonMapper(GsonMapper.createGsonMapper());
                     config.plugins.enableCors(cors ->
@@ -107,7 +121,7 @@ public class Wedlock {
                 })
                 .get("/v2/propose/embed", ctx -> {
                     String html;
-                    try(var inputStream = Wedlock.class.getResourceAsStream("embed.html")){
+                    try (var inputStream = Wedlock.class.getResourceAsStream("embed.html")) {
                         html = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
                     }
                     ctx.status(200).html(html);
@@ -118,5 +132,29 @@ public class Wedlock {
                 .start(8080);
 
 
+    }
+
+    @NotNull
+    private static Thread createSaveThread(MarriageManager marriageManager, File databaseFile, String name, boolean loop) {
+        Logger logger = LoggerFactory.getLogger("Save Thread");
+        var saveThread = new Thread(() -> {
+            logger.info(name + " started.");
+            do {
+                try {
+                    marriageManager.saveTo(databaseFile);
+                } catch (IOException e) {
+                    logger.error("Could not save database", e);
+                }
+                if (loop)
+                    try {
+                        Thread.sleep(60000L);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+            } while (loop);
+            logger.info(name + " exiting.");
+        }, name);
+        saveThread.setDaemon(loop);
+        return saveThread;
     }
 }
