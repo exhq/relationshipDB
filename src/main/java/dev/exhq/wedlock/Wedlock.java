@@ -3,6 +3,8 @@ package dev.exhq.wedlock;
 import io.javalin.Javalin;
 import io.javalin.plugin.bundled.CorsPluginConfig;
 
+import java.nio.charset.StandardCharsets;
+
 public class Wedlock {
     public static void main(String[] args) {
         var marriageManager = new MarriageManager();
@@ -90,7 +92,7 @@ public class Wedlock {
                     }
                     ctx.status(200).result("");
                 })
-                .post("/v2/propose/view", ctx -> {
+                .get("/v2/propose/view", ctx -> {
                     var proposalId = ctx.queryParam("proposalid");
                     if (proposalId == null) {
                         ctx.status(400).json(new Failure("No proposalid provided"));
@@ -102,6 +104,13 @@ public class Wedlock {
                         return;
                     }
                     ctx.status(200).json(proposal);
+                })
+                .get("/v2/propose/embed", ctx -> {
+                    String html;
+                    try(var inputStream = Wedlock.class.getResourceAsStream("embed.html")){
+                        html = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+                    }
+                    ctx.status(200).html(html);
                 })
                 .exception(AuthenticationMissingException.class, (exception, ctx) -> ctx.status(401).json(new Failure("You need to log in first!")))
                 .error(404, ctx -> ctx.status(404).json(new Failure("Not found")))
