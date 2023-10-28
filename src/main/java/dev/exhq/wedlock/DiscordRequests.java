@@ -40,8 +40,8 @@ public class DiscordRequests {
             if (response.statusCode() != 200)
                 return null;
             var data = response.body();
-            if (!Objects.equals(data.application().id(), "394100837032394763")) {
-                System.out.println("Logged in as " + data.application().id() + " expected 394100837032394763");
+            if (!Objects.equals(data.application().id(), "1166756085554757733")) {
+                System.out.println("Logged in as " + data.application().id() + " expected 1166756085554757733");
                 return null;
             }
             return data;

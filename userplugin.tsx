@@ -1,6 +1,6 @@
 /*
- * RelationshipDB user plugin
- * Copyright (c) 2023 Linnea Gräf and Exhq
+ * Vencord, a Discord client mod
+ * Copyright (c) 2023 Vendicated and contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -9,17 +9,15 @@ import { DataStore } from "@api/index";
 import { addAccessory } from "@api/MessageAccessories";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
-import { sendMessage } from "@utils/discord";
+import { getCurrentChannel, sendMessage } from "@utils/discord";
 import { openModal } from "@utils/modal";
 import { LazyComponent, useAwaiter } from "@utils/react";
 import definePlugin from "@utils/types";
 import { findByCode, findByProps, findByPropsLazy } from "@webpack";
-import { Button, Parser, showToast, Text, UserStore } from "@webpack/common";
+import { Button, FluxDispatcher, Parser, showToast, SnowflakeUtils, Text, UserStore } from "@webpack/common";
 import { Message } from "discord-types/general";
-
 const OAuth = findByPropsLazy("OAuth2AuthorizeModal");
-
-const WL_HOSTNAME = "http://localhost:8080";
+const WL_HOSTNAME = "wedlock.exhq.dev";
 const messageLinkRegex = /(?<!<)https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/g;
 
 function getTokenStorageKey(): string {
@@ -41,7 +39,7 @@ async function getAuthorizationToken(): Promise<string> {
                 {...props}
                 scopes={["identify"]}
                 responseType="token"
-                clientId="394100837032394763"
+                clientId="1166756085554757733"
                 cancelCompletesFlow={false}
                 callback={async (response: { location: string; }) => {
                     const callbackUrl = (response.location);
@@ -80,9 +78,11 @@ async function fetchWedlock(method: "GET" | "POST", url: string, params?: Record
             return await fetchWedlock(method, url, params, true);
         }
     }
+    if (response.status === 404) {
+        return null;
+    }
     const jsonResponse = await response.json();
     if ("reason" in jsonResponse || response.status !== 200) {
-        showToast("failed to edate for now:" + jsonResponse.reason);
         return null;
     }
     return jsonResponse;
@@ -99,6 +99,23 @@ type Proposal = {
 function mentionFor(id: string) {
     return Parser.parse(`<@${id}>`);
 }
+
+async function sendSystemMessage(message: string) {
+    await FluxDispatcher.dispatch({
+        type: "MESSAGE_CREATE",
+        channelId: getCurrentChannel().id,
+        message: {
+            flags: 64,
+            author: UserStore.getUser("1155605314557718620"),
+            content: message,
+            channel_id: getCurrentChannel().id,
+            id: SnowflakeUtils.fromTimestamp(Date.now()),
+            timestamp: new Date().toISOString()
+        },
+
+    });
+}
+
 
 function ProposalComponent({ proposalId }: { proposalId: string; }) {
     const [value] = useAwaiter(async () => {
@@ -124,7 +141,7 @@ function ProposalComponent({ proposalId }: { proposalId: string; }) {
                             style={{ display: "inline-block" }}
                             onClick={() => {
                                 showToast("Accepting proposal");
-                                fetchWedlock("POST", "v2/propose/accept", { proposalId }).then(response =>
+                                fetchWedlock("POST", "v2/propose/accept", { proposalid: proposalId }).then(response =>
                                     response && showToast("Accepted proposal succesfully"));
                             }}>Accept</Button>
                         {" "}
@@ -169,25 +186,26 @@ export default definePlugin({
     },
     guh(userid: string) {
         const partner = async () => {
-            const res = await fetchWedlock("GET", `/v2/marriage?userid=${userid}`).then(r => r.json());
+            console.log(userid);
+            const res = await fetchWedlock("GET", `v2/marriage?userid=${userid}`);
+            console.log("response", res);
             if (!res) {
-                return "the fucking server is down";
+                return null;
             }
             if (res.reason === "Not found") {
-                console.log(true);
                 return true;
             } else {
-                console.log(userid === res.bottom ? res.top : res.bottom);
                 return userid === res.bottom ? res.top : res.bottom;
             }
         };
         const [partnerInfo] = useAwaiter(async () => {
+            if (await partner() == null) return null;
             return await fetch(`https://adu.shiggy.fun/v1/${await partner()}.json`).then(r => r.json());
         }, { fallbackValue: "loading...", });
         console.log(partnerInfo);
         const classNames = findByProps("defaultColor");
         if (partnerInfo == null) {
-            return <p className={classNames.defaultColor}> married to THE FUCKING SERVER IS DOWN</p>;
+            return <></>;
         }
         return <p className={classNames.defaultColor}> married to {partnerInfo.username}</p>;
     },
@@ -234,15 +252,39 @@ export default definePlugin({
                 type: ApplicationCommandOptionType.USER,
                 required: true,
                 description: "Who's your cute kitten?"
+            }, {
+                name: "message",
+                type: ApplicationCommandOptionType.USER,
+                required: true,
+                description: "gimme yourbest pickup line"
             }], execute(args, ctx) {
                 const proposee = args.find(it => it.name === "proposee")!!.value;
+                const msg = args.find(it => it.name === "message")!!.value;
                 (async () => {
+                    if (proposee === UserStore.getCurrentUser().id) {
+                        await sendSystemMessage("you cant marry yourself silly");
+                        return;
+                    }
                     const response = await fetchWedlock("POST", "v2/propose", {
                         to: proposee,
                         msg: "gay"
                     });
                     console.log(response);
                     sendMessage(ctx.channel.id, { content: `will you marry me <@${proposee}>? ${WL_HOSTNAME}/v2/propose/embed?proposalid=` + response.id });
+                })();
+            }
+        },
+        {
+            name: "divorce",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            description: "no longer edate",
+            options: [],
+            execute(args, ctx) {
+                (async () => {
+                    const response = await fetchWedlock("POST", "v2/divorce");
+                    if (response === null) {
+                        sendSystemMessage("you're not married silly");
+                    }
                 })();
             }
         }
@@ -257,5 +299,6 @@ export default definePlugin({
         }
     ],
 });
+
 
 
